@@ -10,6 +10,12 @@ __pycache__/
 # Node modules
 node_modules/
 
+# Build output
+dist/
+
+# Vercel
+.vercel
+
 # Cache directories
 .rag_cache/
 .vite/

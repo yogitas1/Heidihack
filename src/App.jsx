@@ -1,0 +1,1050 @@
+/**
+ * Clinical AI Assistant - Main Application Component
+ *
+ * DATA FLOW:
+ * 1. On mount: Fetch patient data from /api/patient
+ * 2. User fills ClinicalForm → form data stored in component state
+ * 3. On submit: POST to /api/analyze with form_data + patient_context
+ * 4. Results displayed in AIInsights component (side-by-side on desktop)
+ *
+ * STATE MANAGEMENT STRATEGY:
+ * - Centralized state in App component (lifted state pattern)
+ * - Patient data fetched once and passed down as props
+ * - Form manages its own internal state, passes data up on submit
+ * - Analysis results stored here and passed to AIInsights
+ *
+ * ERROR HANDLING APPROACH:
+ * - Network errors caught in API calls
+ * - User-friendly messages displayed in error banner
+ * - Console logging for debugging
+ * - Auto-retry option for transient failures
+ *
+ * UX DECISIONS:
+ * - Side-by-side layout allows doctor to reference form while viewing results
+ * - Sticky patient card provides constant context
+ * - Progress indicators reduce perceived wait time
+ * - Confirmation dialog prevents accidental data loss
+ */
+
+import { useState, useEffect, useCallback, useRef } from 'react';
+import PatientCard from './components/PatientCard';
+import ClinicalForm from './components/ClinicalForm';
+import AIInsights from './components/AIInsights';
+import PatientList from './components/PatientList';
+import Calendar from './components/Calendar';
+import AppointmentModal from './components/AppointmentModal';
+import FollowUpRecommendations from './components/FollowUpRecommendations';
+import RecommendedActions from './components/RecommendedActions';
+import PatientDashboard from './components/PatientDashboard';
+import PatientProfile from './components/PatientProfile';
+import apiClient from './api/client';
+import { mockPatients } from './data/mockPatients';
+
+function App() {
+  // =============================================================================
+  // STATE MANAGEMENT
+  // =============================================================================
+
+  // Selected patient from list - null means show patient list
+  const [selectedPatient, setSelectedPatient] = useState(null);
+
+  // Completed patients tracking
+  const [completedPatients, setCompletedPatients] = useState([]);
+
+  // Current view: 'list' | 'form' | 'calendar' | 'dashboard' | 'patient-profile'
+  const [currentView, setCurrentView] = useState('list');
+
+  // Selected patient for dashboard profile view
+  const [dashboardPatientId, setDashboardPatientId] = useState(null);
+
+  // Appointments for calendar
+  const [appointments, setAppointments] = useState([]);
+
+  // Appointment modal state
+  const [appointmentModal, setAppointmentModal] = useState({
+    isOpen: false,
+    selectedDate: null,
+    appointments: [],
+    mode: 'view',
+    prefillData: null
+  });
+
+  // Follow-up recommendations from AI analysis
+  const [followUpRecommendations, setFollowUpRecommendations] = useState([]);
+
+  // Patient data from API - fetched once on mount
+  const [patientData, setPatientData] = useState(null);
+
+  // Analysis results from AI processing
+  const [analysisResults, setAnalysisResults] = useState(null);
+
+  // Loading states for different operations
+  const [isLoading, setIsLoading] = useState({
+    patient: false,
+    analysis: false
+  });
+
+  // Error state for displaying user-friendly messages
+  const [error, setError] = useState(null);
+
+  // Analysis progress tracking: 'note' | 'diagnosis' | 'tasks' | null
+  const [analysisProgress, setAnalysisProgress] = useState(null);
+
+  // Confirmation dialog state
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+
+  // Reset trigger for form component
+  const [resetTrigger, setResetTrigger] = useState(0);
+
+  // Track if encounter has been saved
+  const [encounterSaved, setEncounterSaved] = useState(false);
+
+  // Form data for saving encounters
+  const [lastFormData, setLastFormData] = useState(null);
+
+  // Reference to insights section for scrolling
+  const insightsRef = useRef(null);
+
+  // Reference to form for keyboard shortcuts
+  const formRef = useRef(null);
+
+  // =============================================================================
+  // KEYBOARD SHORTCUTS
+  // =============================================================================
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Esc: Close dialogs
+      if (e.key === 'Escape') {
+        setShowResetConfirm(false);
+        setError(null);
+      }
+
+      // Cmd/Ctrl + Enter: Submit form (handled in ClinicalForm)
+      // This is just for documentation - actual handler is in form
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // =============================================================================
+  // DATA FETCHING
+  // =============================================================================
+
+  /**
+   * Set patient data when a patient is selected from the list
+   */
+  useEffect(() => {
+    if (selectedPatient) {
+      setPatientData(selectedPatient);
+      setIsLoading(prev => ({ ...prev, patient: false }));
+    }
+  }, [selectedPatient]);
+
+  /**
+   * Handle patient selection from the list
+   */
+  const handleSelectPatient = useCallback((patient) => {
+    setSelectedPatient(patient);
+    setAnalysisResults(null);
+    setFollowUpRecommendations([]);
+    setError(null);
+    setCurrentView('form');
+  }, []);
+
+  /**
+   * Handle going back to patient list
+   */
+  const handleBackToList = useCallback(() => {
+    if (analysisResults) {
+      // Mark patient as completed if analysis was done
+      setCompletedPatients(prev =>
+        prev.includes(selectedPatient.id) ? prev : [...prev, selectedPatient.id]
+      );
+    }
+    setSelectedPatient(null);
+    setPatientData(null);
+    setAnalysisResults(null);
+    setFollowUpRecommendations([]);
+    setError(null);
+    setResetTrigger(prev => prev + 1);
+    setCurrentView('list');
+    setEncounterSaved(false);
+    setLastFormData(null);
+  }, [analysisResults, selectedPatient]);
+
+  /**
+   * Convert mockPatients to calendar appointments
+   */
+  const getPatientAppointments = useCallback(() => {
+    return mockPatients.map(patient => ({
+      id: `patient-${patient.id}`,
+      patientId: patient.id.toString(),
+      patientName: patient.name,
+      date: patient.appointmentTime,
+      duration: 30,
+      type: 'initial',
+      status: completedPatients.includes(patient.id) ? 'completed' : 'scheduled',
+      notes: patient.medicalHistory ? patient.medicalHistory.join(', ') : '',
+      isFollowUp: false
+    }));
+  }, [completedPatients]);
+
+  /**
+   * Fetch appointments from backend and merge with patient appointments
+   */
+  const fetchAppointments = useCallback(async () => {
+    try {
+      const response = await apiClient.get('/api/appointments');
+      const apiAppointments = response.data || [];
+
+      // Merge API appointments with patient appointments
+      const patientAppointments = getPatientAppointments();
+      setAppointments([...patientAppointments, ...apiAppointments]);
+    } catch (err) {
+      console.error('Failed to fetch appointments:', err);
+      // Fall back to just patient appointments
+      setAppointments(getPatientAppointments());
+    }
+  }, [getPatientAppointments]);
+
+  // Fetch appointments on mount and when completed patients change
+  useEffect(() => {
+    fetchAppointments();
+  }, [fetchAppointments, completedPatients]);
+
+  /**
+   * Handle calendar date click
+   */
+  const handleDateClick = useCallback((date, dayAppointments) => {
+    setAppointmentModal({
+      isOpen: true,
+      selectedDate: date,
+      appointments: dayAppointments,
+      mode: 'view',
+      prefillData: null
+    });
+  }, []);
+
+  /**
+   * Handle appointment click
+   */
+  const handleAppointmentClick = useCallback((appointment) => {
+    // Could open appointment details modal
+    console.log('Appointment clicked:', appointment);
+  }, []);
+
+  /**
+   * Handle adding appointment
+   */
+  const handleAddAppointment = useCallback(async (appointmentData) => {
+    try {
+      const response = await apiClient.post('/api/appointments', appointmentData);
+      // Refresh appointments
+      await fetchAppointments();
+      setAppointmentModal(prev => ({ ...prev, isOpen: false }));
+      announceToScreenReader('Appointment added successfully');
+    } catch (err) {
+      console.error('Failed to add appointment:', err);
+      setError('Failed to add appointment. Please try again.');
+    }
+  }, [fetchAppointments]);
+
+  /**
+   * Handle adding follow-up to calendar
+   */
+  const handleAddFollowUp = useCallback(async (followUpData) => {
+    try {
+      await apiClient.post('/api/appointments', followUpData);
+      await fetchAppointments();
+      announceToScreenReader('Follow-up appointment added to calendar');
+    } catch (err) {
+      console.error('Failed to add follow-up:', err);
+      throw err;
+    }
+  }, [fetchAppointments]);
+
+  /**
+   * Handle viewing patient profile from dashboard
+   */
+  const handleViewPatientProfile = useCallback((patientId) => {
+    setDashboardPatientId(patientId);
+    setCurrentView('patient-profile');
+  }, []);
+
+  /**
+   * Handle going back to dashboard from patient profile
+   */
+  const handleBackToDashboard = useCallback(() => {
+    setDashboardPatientId(null);
+    setCurrentView('dashboard');
+  }, []);
+
+  /**
+   * Handle saving encounter to patient record
+   */
+  const handleSaveEncounter = useCallback(async () => {
+    if (!patientData || !analysisResults || !lastFormData) {
+      setError('Missing data to save encounter');
+      return;
+    }
+
+    try {
+      // Find the patient ID in the dashboard that matches the MRN
+      const encounterData = {
+        chiefComplaint: lastFormData.chief_complaint || '',
+        hpi: lastFormData.hpi || '',
+        physicalExam: lastFormData.physical_exam || '',
+        vitals: patientData.vitals || {},
+        doctorNotes: lastFormData.doctor_notes || '',
+        clinicalNote: analysisResults.soap_note ? {
+          subjective: analysisResults.soap_note.subjective || '',
+          objective: analysisResults.soap_note.objective || '',
+          assessment: analysisResults.soap_note.assessment || '',
+          plan: analysisResults.soap_note.plan || ''
+        } : null,
+        icdCodes: analysisResults.differential_diagnosis?.map(d => ({
+          code: d.icd_code || '',
+          description: d.diagnosis || ''
+        })) || [],
+        differentialDiagnoses: analysisResults.differential_diagnosis || [],
+        recommendedActions: analysisResults.recommended_actions || [],
+        provider: 'Dr. Smith'
+      };
+
+      // Get patient ID from MRN mapping (1-5 based on MRN-2024-00X format)
+      const mrnMatch = patientData.mrn?.match(/MRN-2024-00(\d)/);
+      const patientId = mrnMatch ? mrnMatch[1] : '1';
+
+      const response = await apiClient.post(`/api/patients/${patientId}/encounters`, encounterData);
+
+      setEncounterSaved(true);
+      announceToScreenReader('Encounter saved successfully');
+
+      return response.data;
+    } catch (err) {
+      console.error('Failed to save encounter:', err);
+      setError('Failed to save encounter. Please try again.');
+      throw err;
+    }
+  }, [patientData, analysisResults, lastFormData]);
+
+  /**
+   * Handle order submission from RecommendedActions
+   */
+  const handleOrderSubmit = useCallback(async (orderData) => {
+    try {
+      const response = await apiClient.post('/api/orders', orderData);
+      announceToScreenReader(`Order submitted successfully: ${orderData.orderDetails.orderName}`);
+      setError(null);
+      return response.data;
+    } catch (err) {
+      console.error('Failed to submit order:', err);
+
+      // Handle FastAPI validation errors (422) which return array of error objects
+      let errorMessage = 'Failed to submit order. Please try again.';
+      const detail = err.response?.data?.detail;
+
+      if (Array.isArray(detail)) {
+        // FastAPI validation errors: [{type, loc, msg, input}, ...]
+        errorMessage = detail.map(e => e.msg || 'Validation error').join(', ');
+      } else if (typeof detail === 'string') {
+        errorMessage = detail;
+      } else if (detail?.message) {
+        errorMessage = detail.message;
+      }
+
+      setError(errorMessage);
+      throw err;
+    }
+  }, []);
+
+  /**
+   * Get provider context for orders
+   */
+  const getProviderContext = useCallback(() => {
+    return {
+      name: 'Dr. Smith', // Would come from auth context in production
+      id: 'provider-001',
+      npi: '1234567890',
+      facility: 'Clinical AI Health Center',
+      department: 'Internal Medicine',
+    };
+  }, []);
+
+  /**
+   * Close appointment modal
+   */
+  const closeAppointmentModal = useCallback(() => {
+    setAppointmentModal(prev => ({ ...prev, isOpen: false }));
+  }, []);
+
+  // =============================================================================
+  // FORM SUBMISSION & ANALYSIS
+  // =============================================================================
+
+  /**
+   * Handle form submission and trigger AI analysis
+   *
+   * Flow:
+   * 1. Show loading state with progress indicators
+   * 2. Prepare payload with form data and patient context
+   * 3. Call /api/analyze endpoint
+   * 4. Update results and scroll to insights
+   * 5. Move focus to insights for accessibility
+   */
+  const handleFormSubmit = useCallback(async (formData) => {
+    setIsLoading(prev => ({ ...prev, analysis: true }));
+    setError(null);
+    setAnalysisProgress('note');
+    setLastFormData(formData);
+    setEncounterSaved(false);
+
+    try {
+      // Simulate progress through different stages
+      // Real progress would come from backend streaming/websockets
+      const progressTimer1 = setTimeout(() => setAnalysisProgress('diagnosis'), 2500);
+      const progressTimer2 = setTimeout(() => setAnalysisProgress('tasks'), 5000);
+
+      // Prepare request payload
+      const payload = {
+        form_data: formData,
+        patient_context: patientData ? {
+          name: patientData.name,
+          age: patientData.age,
+          gender: patientData.gender,
+          mrn: patientData.mrn,
+          medical_history: patientData.medical_history || [],
+          medications: patientData.medications || [],
+          allergies: patientData.allergies || [],
+          vitals: patientData.vitals || {}
+        } : {}
+      };
+
+      // Call analyze API
+      const response = await apiClient.post('/api/analyze', payload, {
+        timeout: 60000 // 60 second timeout for AI processing
+      });
+
+      // Clear progress timers
+      clearTimeout(progressTimer1);
+      clearTimeout(progressTimer2);
+
+      setAnalysisResults(response.data);
+      setAnalysisProgress(null);
+
+      // Set follow-up recommendations if available
+      if (response.data.follow_up_recommendations) {
+        setFollowUpRecommendations(response.data.follow_up_recommendations);
+      }
+
+      // Scroll to insights section after results load
+      setTimeout(() => {
+        insightsRef.current?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start'
+        });
+
+        // Move focus for accessibility
+        insightsRef.current?.focus();
+
+        // Announce to screen readers
+        announceToScreenReader('Analysis complete. Results are now available.');
+      }, 100);
+
+    } catch (err) {
+      console.error('Analysis failed:', err);
+
+      // Determine user-friendly error message
+      let errorMessage = 'Analysis failed. Please try again.';
+
+      if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+        errorMessage = 'Request timed out. Please try again.';
+      } else if (err.code === 'ERR_NETWORK' || !navigator.onLine) {
+        errorMessage = 'Unable to connect. Please check your connection.';
+      } else if (err.response?.data?.detail) {
+        // Handle FastAPI validation errors (422)
+        const detail = err.response.data.detail;
+        if (Array.isArray(detail)) {
+          // Pydantic validation errors return an array of error objects
+          errorMessage = detail.map(e => e.msg || e.message || JSON.stringify(e)).join(', ');
+        } else if (typeof detail === 'string') {
+          errorMessage = detail;
+        } else if (typeof detail === 'object') {
+          errorMessage = detail.msg || detail.message || JSON.stringify(detail);
+        }
+      }
+
+      setError(errorMessage);
+      setAnalysisProgress(null);
+
+      // Auto-dismiss error after 15 seconds
+      setTimeout(() => setError(null), 15000);
+    } finally {
+      setIsLoading(prev => ({ ...prev, analysis: false }));
+    }
+  }, [patientData]);
+
+  // =============================================================================
+  // RESET / NEW ENCOUNTER
+  // =============================================================================
+
+  /**
+   * Show confirmation dialog before resetting
+   * Prevents accidental data loss
+   */
+  const handleNewEncounterClick = useCallback(() => {
+    if (analysisResults) {
+      setShowResetConfirm(true);
+    } else {
+      // No results to lose, just reset
+      handleConfirmReset();
+    }
+  }, [analysisResults]);
+
+  /**
+   * Reset all state for a new encounter
+   * Clears form data, results, and localStorage draft
+   */
+  const handleConfirmReset = useCallback(() => {
+    setAnalysisResults(null);
+    setError(null);
+    setAnalysisProgress(null);
+    setShowResetConfirm(false);
+    setIsLoading({ patient: false, analysis: false });
+    setEncounterSaved(false);
+    setLastFormData(null);
+
+    // Trigger form reset by incrementing the resetTrigger
+    setResetTrigger(prev => prev + 1);
+
+    // Scroll to top
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    // Announce to screen readers
+    announceToScreenReader('Form has been reset. Starting new encounter.');
+  }, []);
+
+  // =============================================================================
+  // UTILITY FUNCTIONS
+  // =============================================================================
+
+  /**
+   * Announce message to screen readers using ARIA live region
+   */
+  const announceToScreenReader = (message) => {
+    const announcement = document.getElementById('sr-announcements');
+    if (announcement) {
+      announcement.textContent = message;
+      // Clear after announcement
+      setTimeout(() => {
+        announcement.textContent = '';
+      }, 1000);
+    }
+  };
+
+  /**
+   * Retry failed request
+   */
+  const handleRetry = useCallback(() => {
+    setError(null);
+    // User can re-submit the form
+  }, []);
+
+  /**
+   * Dismiss error banner
+   */
+  const dismissError = useCallback(() => {
+    setError(null);
+  }, []);
+
+  /**
+   * Get progress message based on current stage
+   */
+  const getProgressMessage = () => {
+    switch (analysisProgress) {
+      case 'note':
+        return 'Step 1/3: Generating clinical note...';
+      case 'diagnosis':
+        return 'Step 2/3: Analyzing differential diagnoses...';
+      case 'tasks':
+        return 'Step 3/3: Creating action plan...';
+      default:
+        return 'Processing...';
+    }
+  };
+
+  /**
+   * Get progress percentage for visual indicator
+   */
+  const getProgressPercentage = () => {
+    switch (analysisProgress) {
+      case 'note':
+        return 33;
+      case 'diagnosis':
+        return 66;
+      case 'tasks':
+        return 90;
+      default:
+        return 0;
+    }
+  };
+
+  // =============================================================================
+  // RENDER
+  // =============================================================================
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex flex-col">
+      {/* Skip to main content link */}
+      <a
+        href="#main-content"
+        className="skip-link"
+      >
+        Skip to main content
+      </a>
+
+      {/* Screen reader announcements (hidden visually) */}
+      <div
+        id="sr-announcements"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+      />
+
+      {/* =================================================================== */}
+      {/* HEADER */}
+      {/* =================================================================== */}
+      <header className="bg-white border-b border-gray-200 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center">
+              <svg
+                className="h-8 w-8 text-blue-600"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
+                />
+              </svg>
+              <h1 className="ml-3 text-xl font-semibold text-gray-900">
+                Clinical AI Assistant
+              </h1>
+            </div>
+            <div className="flex items-center space-x-4">
+              {selectedPatient && (
+                <button
+                  onClick={handleBackToList}
+                  className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 transition-colors"
+                  aria-label="Back to patient list"
+                >
+                  <svg className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                  </svg>
+                  Patient List
+                </button>
+              )}
+              <button
+                onClick={() => setCurrentView(currentView === 'dashboard' || currentView === 'patient-profile' ? 'list' : 'dashboard')}
+                className={`inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 ${
+                  currentView === 'dashboard' || currentView === 'patient-profile'
+                    ? 'text-white bg-green-600 border border-green-600 hover:bg-green-700'
+                    : 'text-green-600 bg-green-50 border border-green-200 hover:bg-green-100'
+                }`}
+                aria-label="View patient dashboard"
+              >
+                <svg className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+                Dashboard
+              </button>
+              <button
+                onClick={() => setCurrentView(currentView === 'calendar' ? 'list' : 'calendar')}
+                className={`inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${
+                  currentView === 'calendar'
+                    ? 'text-white bg-blue-600 border border-blue-600 hover:bg-blue-700'
+                    : 'text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100'
+                }`}
+                aria-label="View calendar"
+              >
+                <svg className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                Calendar
+              </button>
+              {selectedPatient && (
+                <button
+                  onClick={handleNewEncounterClick}
+                  className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 transition-colors"
+                  aria-label="Reset form"
+                >
+                  <svg className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  Reset
+                </button>
+              )}
+              <span className="text-sm text-gray-500 hidden md:block">
+                {new Date().toLocaleDateString('en-US', {
+                  weekday: 'long',
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric'
+                })}
+              </span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* =================================================================== */}
+      {/* ERROR BANNER */}
+      {/* =================================================================== */}
+      {error && (
+        <div
+          className="bg-red-50 border-b border-red-200"
+          role="alert"
+          aria-live="assertive"
+        >
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center">
+                <svg className="h-5 w-5 text-red-500 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className="text-sm font-medium text-red-800">{error}</span>
+              </div>
+              <div className="flex items-center space-x-3">
+                <button
+                  onClick={handleRetry}
+                  className="text-sm font-medium text-red-600 hover:text-red-800 focus:outline-none focus:underline"
+                >
+                  Retry
+                </button>
+                <button
+                  onClick={dismissError}
+                  className="text-red-500 hover:text-red-700 focus:outline-none"
+                  aria-label="Dismiss error"
+                >
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* MAIN CONTENT */}
+      {/* =================================================================== */}
+      {currentView === 'calendar' ? (
+        /* Calendar View */
+        <main id="main-content" className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
+          <div className="mb-6">
+            <h2 className="text-2xl font-bold text-gray-900">Appointment Calendar</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              View and manage all scheduled appointments
+            </p>
+          </div>
+          <Calendar
+            appointments={appointments}
+            onDateClick={handleDateClick}
+            onAppointmentClick={handleAppointmentClick}
+          />
+        </main>
+      ) : currentView === 'dashboard' ? (
+        /* Patient Dashboard View */
+        <main id="main-content" className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
+          <PatientDashboard onSelectPatient={handleViewPatientProfile} />
+        </main>
+      ) : currentView === 'patient-profile' ? (
+        /* Patient Profile View */
+        <main id="main-content" className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
+          <PatientProfile
+            patientId={dashboardPatientId}
+            onBack={handleBackToDashboard}
+          />
+        </main>
+      ) : !selectedPatient ? (
+        /* Patient List View */
+        <main id="main-content" className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
+          <div className="mb-6">
+            <h2 className="text-2xl font-bold text-gray-900">Today's Patients</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Select a patient to begin clinical documentation
+            </p>
+          </div>
+          <PatientList
+            patients={mockPatients}
+            completedPatients={completedPatients}
+            onSelectPatient={handleSelectPatient}
+          />
+        </main>
+      ) : (
+        /* Clinical Documentation View */
+        <>
+          {/* PATIENT CARD */}
+          <div className="bg-gray-100 border-b border-gray-200">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+              <PatientCard patient={patientData} />
+            </div>
+          </div>
+
+          {/* Side by Side Layout */}
+          <main id="main-content" className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Left Column - Clinical Form */}
+              <div className="space-y-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">Clinical Documentation</h2>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Complete the form and click "Generate AI Analysis" to receive insights.
+                    <span className="hidden sm:inline"> Press Cmd/Ctrl + Enter to submit.</span>
+                  </p>
+                </div>
+
+                {/* Form with disabled overlay during analysis */}
+                <div className={`relative ${isLoading.analysis ? 'pointer-events-none' : ''}`}>
+                  {isLoading.analysis && (
+                    <div className="absolute inset-0 bg-white bg-opacity-75 z-10 flex items-center justify-center rounded-lg">
+                      <div className="text-center">
+                        <svg className="animate-spin h-8 w-8 text-blue-600 mx-auto mb-2" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <p className="text-sm text-gray-600">Processing...</p>
+                      </div>
+                    </div>
+                  )}
+                  <div ref={formRef}>
+                    <ClinicalForm
+                      patientContext={patientData}
+                      onSubmit={handleFormSubmit}
+                      resetTrigger={resetTrigger}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column - AI Insights */}
+              <div
+                className="space-y-4"
+                ref={insightsRef}
+                tabIndex={-1}
+                aria-label="Analysis results"
+              >
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">AI Analysis</h2>
+                  <p className="text-sm text-gray-500 mt-1">
+                    {analysisResults
+                      ? 'Review the generated insights and recommendations below.'
+                      : 'Complete the clinical form to generate AI-powered analysis.'}
+                  </p>
+                </div>
+
+                {/* Show insights or placeholder */}
+                {analysisResults ? (
+                  <div className="slide-in-right space-y-6">
+                    {/* Save Encounter Button */}
+                    <div className="flex justify-end">
+                      <button
+                        onClick={handleSaveEncounter}
+                        disabled={encounterSaved}
+                        className={`inline-flex items-center px-4 py-2 text-sm font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+                          encounterSaved
+                            ? 'bg-green-100 text-green-800 cursor-default'
+                            : 'bg-medical-600 text-white hover:bg-medical-700 focus:ring-medical-500'
+                        }`}
+                      >
+                        {encounterSaved ? (
+                          <>
+                            <svg className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                            Encounter Saved
+                          </>
+                        ) : (
+                          <>
+                            <svg className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                            </svg>
+                            Save Encounter
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    <AIInsights analysisData={analysisResults} />
+
+                    {/* Recommended Actions with Order Placement */}
+                    {analysisResults.recommended_actions && (
+                      <RecommendedActions
+                        recommendations={analysisResults.recommended_actions}
+                        patientContext={patientData}
+                        providerContext={getProviderContext()}
+                        onOrderSubmit={handleOrderSubmit}
+                      />
+                    )}
+
+                    {/* Follow-up Recommendations */}
+                    {followUpRecommendations.length > 0 && (
+                      <FollowUpRecommendations
+                        recommendations={followUpRecommendations}
+                        onAddToCalendar={handleAddFollowUp}
+                        patientContext={patientData}
+                      />
+                    )}
+                  </div>
+                ) : (
+                  <div className="card p-8 text-center bg-gray-50 border-2 border-dashed border-gray-300">
+                    <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                    </svg>
+                    <h3 className="mt-4 text-sm font-medium text-gray-900">No Analysis Yet</h3>
+                    <p className="mt-2 text-sm text-gray-500">
+                      Fill out the clinical form on the left and click "Generate AI Analysis" to see results here.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </main>
+        </>
+      )}
+
+      {/* =================================================================== */}
+      {/* FOOTER */}
+      {/* =================================================================== */}
+      <footer className="bg-white border-t border-gray-200 mt-auto">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+          <p className="text-center text-sm text-gray-500">
+            Clinical AI Assistant • For authorized healthcare providers only • HIPAA Compliant
+          </p>
+        </div>
+      </footer>
+
+      {/* =================================================================== */}
+      {/* LOADING OVERLAY */}
+      {/* =================================================================== */}
+      {isLoading.analysis && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="loading-title"
+        >
+          <div className="bg-white rounded-lg p-8 max-w-md mx-4 shadow-2xl modal-content">
+            <div className="text-center">
+              {/* Animated icon */}
+              <div className="relative mb-6">
+                <svg className="animate-spin h-16 w-16 text-blue-600 mx-auto" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              </div>
+
+              <h3 id="loading-title" className="text-lg font-semibold text-gray-900 mb-2">
+                Generating Analysis
+              </h3>
+
+              <p className="text-sm text-gray-600 mb-4">
+                {getProgressMessage()}
+              </p>
+
+              {/* Progress bar */}
+              <div className="w-full bg-gray-200 rounded-full h-2 mb-4 overflow-hidden">
+                <div
+                  className="bg-blue-600 h-2 rounded-full progress-bar pulse-gradient"
+                  style={{ width: `${getProgressPercentage()}%` }}
+                  role="progressbar"
+                  aria-valuenow={getProgressPercentage()}
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-label={getProgressMessage()}
+                ></div>
+              </div>
+
+              {/* Step indicators */}
+              <div className="flex justify-between text-xs text-gray-500 mb-4">
+                <span className={analysisProgress === 'note' ? 'text-blue-600 font-medium' : ''}>
+                  Clinical Note
+                </span>
+                <span className={analysisProgress === 'diagnosis' ? 'text-blue-600 font-medium' : ''}>
+                  Diagnoses
+                </span>
+                <span className={analysisProgress === 'tasks' ? 'text-blue-600 font-medium' : ''}>
+                  Action Plan
+                </span>
+              </div>
+
+              <p className="text-xs text-gray-400">
+                Estimated time: ~8 seconds
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* RESET CONFIRMATION DIALOG */}
+      {/* =================================================================== */}
+      {showResetConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="reset-title"
+        >
+          <div className="bg-white rounded-lg p-6 max-w-sm mx-4 shadow-xl modal-content">
+            <h4 id="reset-title" className="text-lg font-semibold text-gray-900 mb-2">
+              Start New Encounter?
+            </h4>
+            <p className="text-sm text-gray-600 mb-4">
+              Are you sure? This will clear all entered data and analysis results. This action cannot be undone.
+            </p>
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => setShowResetConfirm(false)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmReset}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+              >
+                Clear & Reset
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* APPOINTMENT MODAL */}
+      {/* =================================================================== */}
+      <AppointmentModal
+        isOpen={appointmentModal.isOpen}
+        onClose={closeAppointmentModal}
+        selectedDate={appointmentModal.selectedDate}
+        appointments={appointmentModal.appointments}
+        onAddAppointment={handleAddAppointment}
+        mode={appointmentModal.mode}
+        patients={mockPatients}
+        prefillData={appointmentModal.prefillData}
+      />
+    </div>
+  );
+}
+
+export default App;
