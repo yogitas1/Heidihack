@@ -9,7 +9,7 @@ import httpx
 from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-from .models import (
+from models import (
     TranscriptRequest,
     ExtractedFormData,
     AnalysisRequest,
@@ -25,6 +25,7 @@ from mock_data import MOCK_PATIENT
 from validate_mock_data import validate_mock_data
 from rag_engine import ClinicalRAG
 from routes.appointments import router as appointments_router, generate_follow_up_recommendations
+from routes.orders import router as orders_router
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -45,6 +46,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(appointments_router)
+app.include_router(orders_router)
 
 # Environment variables
 HEIDI_API_KEY = os.getenv("HEIDI_API_KEY")
@@ -135,6 +137,7 @@ def select_mock_response(chief_complaint: str) -> dict:
         logger.info(f"Using mock response: {response_key}")
         return responses[response_key]
     elif "default" in responses:
+        
         logger.info("Falling back to default mock response")
         return responses["default"]
     else:

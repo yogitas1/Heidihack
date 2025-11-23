@@ -34,6 +34,7 @@ import PatientList from './components/PatientList';
 import Calendar from './components/Calendar';
 import AppointmentModal from './components/AppointmentModal';
 import FollowUpRecommendations from './components/FollowUpRecommendations';
+import RecommendedActions from './components/RecommendedActions';
 import apiClient from './api/client';
 import { mockPatients } from './data/mockPatients';
 
@@ -250,6 +251,49 @@ function App() {
       throw err;
     }
   }, [fetchAppointments]);
+
+  /**
+   * Handle order submission from RecommendedActions
+   */
+  const handleOrderSubmit = useCallback(async (orderData) => {
+    try {
+      const response = await apiClient.post('/api/orders', orderData);
+      announceToScreenReader(`Order submitted successfully: ${orderData.orderDetails.orderName}`);
+      setError(null);
+      return response.data;
+    } catch (err) {
+      console.error('Failed to submit order:', err);
+
+      // Handle FastAPI validation errors (422) which return array of error objects
+      let errorMessage = 'Failed to submit order. Please try again.';
+      const detail = err.response?.data?.detail;
+
+      if (Array.isArray(detail)) {
+        // FastAPI validation errors: [{type, loc, msg, input}, ...]
+        errorMessage = detail.map(e => e.msg || 'Validation error').join(', ');
+      } else if (typeof detail === 'string') {
+        errorMessage = detail;
+      } else if (detail?.message) {
+        errorMessage = detail.message;
+      }
+
+      setError(errorMessage);
+      throw err;
+    }
+  }, []);
+
+  /**
+   * Get provider context for orders
+   */
+  const getProviderContext = useCallback(() => {
+    return {
+      name: 'Dr. Smith', // Would come from auth context in production
+      id: 'provider-001',
+      npi: '1234567890',
+      facility: 'Clinical AI Health Center',
+      department: 'Internal Medicine',
+    };
+  }, []);
 
   /**
    * Close appointment modal
@@ -703,6 +747,16 @@ function App() {
                 {analysisResults ? (
                   <div className="slide-in-right space-y-6">
                     <AIInsights analysisData={analysisResults} />
+
+                    {/* Recommended Actions with Order Placement */}
+                    {analysisResults.recommended_actions && (
+                      <RecommendedActions
+                        recommendations={analysisResults.recommended_actions}
+                        patientContext={patientData}
+                        providerContext={getProviderContext()}
+                        onOrderSubmit={handleOrderSubmit}
+                      />
+                    )}
 
                     {/* Follow-up Recommendations */}
                     {followUpRecommendations.length > 0 && (

@@ -3,7 +3,6 @@ import { useState } from 'react';
 export default function AIInsights({ analysisData }) {
   const [expandedDiagnoses, setExpandedDiagnoses] = useState({});
   const [copiedNote, setCopiedNote] = useState(false);
-  const [selectedActions, setSelectedActions] = useState({});
 
   const toggleDiagnosis = (index) => {
     setExpandedDiagnoses(prev => ({
@@ -22,22 +21,6 @@ export default function AIInsights({ analysisData }) {
     }
   };
 
-  const toggleAction = (category, index) => {
-    const key = `${category}-${index}`;
-    setSelectedActions(prev => ({
-      ...prev,
-      [key]: !prev[key]
-    }));
-  };
-
-  const selectAllInCategory = (category, items) => {
-    const newSelections = { ...selectedActions };
-    items.forEach((_, index) => {
-      newSelections[`${category}-${index}`] = true;
-    });
-    setSelectedActions(newSelections);
-  };
-
   const getRiskBadgeClass = (risk) => {
     switch (risk?.toUpperCase()) {
       case 'HIGH':
@@ -48,20 +31,6 @@ export default function AIInsights({ analysisData }) {
         return 'bg-green-100 text-green-800 border-green-200';
       default:
         return 'bg-gray-100 text-gray-800 border-gray-200';
-    }
-  };
-
-  const getPriorityBadgeClass = (priority) => {
-    switch (priority?.toUpperCase()) {
-      case 'IMMEDIATE':
-      case 'STAT':
-        return 'bg-red-100 text-red-800';
-      case 'URGENT':
-      case 'TODAY':
-        return 'bg-orange-100 text-orange-800';
-      case 'ROUTINE':
-      default:
-        return 'bg-blue-100 text-blue-800';
     }
   };
 
@@ -88,7 +57,7 @@ export default function AIInsights({ analysisData }) {
     );
   }
 
-  const { clinical_note, icd_codes, differential_diagnoses, recommended_actions } = analysisData;
+  const { clinical_note, icd_codes, differential_diagnoses } = analysisData;
 
   return (
     <div className="space-y-6" role="region" aria-label="AI Analysis Results">
@@ -283,148 +252,7 @@ export default function AIInsights({ analysisData }) {
         </div>
       )}
 
-      {/* Recommended Actions */}
-      {recommended_actions && (
-        <div className="card overflow-hidden">
-          <div className="px-6 py-4 bg-gradient-to-r from-medical-50 to-white border-b border-gray-200">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center">
-                <svg className="h-5 w-5 text-medical-600 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                </svg>
-                <h3 className="text-lg font-semibold text-gray-900">Recommended Actions</h3>
-              </div>
-              <button className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-medical-600 rounded-md hover:bg-medical-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-medical-500">
-                <svg className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                </svg>
-                Order Selected
-              </button>
-            </div>
-          </div>
-          <div className="p-6 space-y-6">
-            {/* Immediate Actions */}
-            {recommended_actions.immediate && recommended_actions.immediate.length > 0 && (
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center">
-                    <span className={`px-2 py-0.5 text-xs font-semibold rounded ${getPriorityBadgeClass('IMMEDIATE')}`}>
-                      IMMEDIATE (STAT)
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => selectAllInCategory('immediate', recommended_actions.immediate)}
-                    className="text-xs text-medical-600 hover:text-medical-800"
-                  >
-                    Select All
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  {recommended_actions.immediate.map((action, index) => (
-                    <label key={index} className="flex items-start p-3 bg-red-50 rounded-lg cursor-pointer hover:bg-red-100 transition-colors">
-                      <input
-                        type="checkbox"
-                        checked={selectedActions[`immediate-${index}`] || false}
-                        onChange={() => toggleAction('immediate', index)}
-                        className="h-4 w-4 text-red-600 border-gray-300 rounded focus:ring-red-500 mt-0.5"
-                      />
-                      <div className="ml-3">
-                        <span className="text-sm font-medium text-gray-900">{action.name}</span>
-                        {action.category && (
-                          <span className="ml-2 text-xs text-gray-500">({action.category})</span>
-                        )}
-                        {action.details && (
-                          <p className="text-xs text-gray-600 mt-1">{action.details}</p>
-                        )}
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Urgent Actions */}
-            {recommended_actions.urgent && recommended_actions.urgent.length > 0 && (
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center">
-                    <span className={`px-2 py-0.5 text-xs font-semibold rounded ${getPriorityBadgeClass('URGENT')}`}>
-                      URGENT (Today)
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => selectAllInCategory('urgent', recommended_actions.urgent)}
-                    className="text-xs text-medical-600 hover:text-medical-800"
-                  >
-                    Select All
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  {recommended_actions.urgent.map((action, index) => (
-                    <label key={index} className="flex items-start p-3 bg-orange-50 rounded-lg cursor-pointer hover:bg-orange-100 transition-colors">
-                      <input
-                        type="checkbox"
-                        checked={selectedActions[`urgent-${index}`] || false}
-                        onChange={() => toggleAction('urgent', index)}
-                        className="h-4 w-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500 mt-0.5"
-                      />
-                      <div className="ml-3">
-                        <span className="text-sm font-medium text-gray-900">{action.name}</span>
-                        {action.category && (
-                          <span className="ml-2 text-xs text-gray-500">({action.category})</span>
-                        )}
-                        {action.details && (
-                          <p className="text-xs text-gray-600 mt-1">{action.details}</p>
-                        )}
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Routine Actions */}
-            {recommended_actions.routine && recommended_actions.routine.length > 0 && (
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center">
-                    <span className={`px-2 py-0.5 text-xs font-semibold rounded ${getPriorityBadgeClass('ROUTINE')}`}>
-                      ROUTINE
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => selectAllInCategory('routine', recommended_actions.routine)}
-                    className="text-xs text-medical-600 hover:text-medical-800"
-                  >
-                    Select All
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  {recommended_actions.routine.map((action, index) => (
-                    <label key={index} className="flex items-start p-3 bg-blue-50 rounded-lg cursor-pointer hover:bg-blue-100 transition-colors">
-                      <input
-                        type="checkbox"
-                        checked={selectedActions[`routine-${index}`] || false}
-                        onChange={() => toggleAction('routine', index)}
-                        className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 mt-0.5"
-                      />
-                      <div className="ml-3">
-                        <span className="text-sm font-medium text-gray-900">{action.name}</span>
-                        {action.category && (
-                          <span className="ml-2 text-xs text-gray-500">({action.category})</span>
-                        )}
-                        {action.details && (
-                          <p className="text-xs text-gray-600 mt-1">{action.details}</p>
-                        )}
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {/* Note: Recommended Actions are now displayed in the separate RecommendedActions component with order placement functionality */}
 
       {/* Action Buttons */}
       <div className="card p-6">
@@ -451,7 +279,7 @@ export default function AIInsights({ analysisData }) {
       </div>
 
       {/* Empty State */}
-      {!clinical_note && (!icd_codes || icd_codes.length === 0) && (!differential_diagnoses || differential_diagnoses.length === 0) && !recommended_actions && (
+      {!clinical_note && (!icd_codes || icd_codes.length === 0) && (!differential_diagnoses || differential_diagnoses.length === 0) && (
         <div className="card p-12 text-center">
           <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />

@@ -162,3 +162,144 @@ class Appointment(BaseModel):
     status: str = "scheduled"
     notes: Optional[str] = ""
     isFollowUp: bool = False
+
+
+# Clinical Order Models
+
+class PatientOrderInfo(BaseModel):
+    patientId: Optional[str] = ""
+    patientName: str
+    dateOfBirth: Optional[str] = ""
+    mrn: str
+    gender: Optional[str] = ""
+    phone: Optional[str] = ""
+    address: Optional[str] = ""
+    insuranceId: Optional[str] = ""
+
+
+class ProviderOrderInfo(BaseModel):
+    orderingProvider: str
+    providerId: Optional[str] = ""
+    npi: Optional[str] = ""
+    facility: Optional[str] = ""
+    department: Optional[str] = ""
+    contactPhone: Optional[str] = ""
+    contactFax: Optional[str] = ""
+
+
+class OrderDetailsInfo(BaseModel):
+    orderType: str  # lab, imaging, referral, medication, procedure
+    orderName: str
+    orderCode: Optional[str] = ""
+    quantity: int = 1
+    frequency: Optional[str] = "once"
+    duration: Optional[str] = ""
+    specialInstructions: Optional[str] = ""
+
+
+class ClinicalJustificationInfo(BaseModel):
+    indication: str
+    icd10Codes: List[Dict[str, str]] = []  # [{code: "", description: ""}]
+    clinicalHistory: Optional[str] = ""
+    relevantFindings: Optional[str] = ""
+
+
+class PriorityTimingInfo(BaseModel):
+    priority: str = "routine"  # stat, urgent, routine, scheduled
+    requestedDate: Optional[str] = ""
+    requestedTime: Optional[str] = ""
+    expirationDate: Optional[str] = ""
+    recurring: bool = False
+    recurringSchedule: Optional[str] = ""
+
+
+class CollectionInstructionsInfo(BaseModel):
+    fasting: bool = False
+    fastingHours: Optional[str] = ""
+    specimen: Optional[str] = ""
+    collectionSite: Optional[str] = ""
+    specialHandling: Optional[str] = ""
+    transportInstructions: Optional[str] = ""
+
+
+class SafetyChecksInfo(BaseModel):
+    allergies: List[str] = []
+    allergyNotes: Optional[str] = ""
+    contraindications: List[str] = []
+    contraindicationNotes: Optional[str] = ""
+    pregnancyStatus: Optional[str] = ""
+    renalFunction: Optional[str] = ""
+    safetyConfirmed: bool = False
+
+
+class AttachmentsInfo(BaseModel):
+    documents: List[str] = []
+    notes: Optional[str] = ""
+    priorAuthRequired: bool = False
+    priorAuthNumber: Optional[str] = ""
+
+
+class AuthenticationInfo(BaseModel):
+    authenticationId: str
+    digitalSignature: Optional[str] = ""
+    signatureTimestamp: Optional[str] = ""
+    attestation: bool = False
+
+
+class OrderMetadata(BaseModel):
+    createdAt: str
+    updatedAt: Optional[str] = ""
+    status: str = "pending"  # pending, approved, in_progress, completed, cancelled
+    version: int = 1
+
+
+class AuditEntry(BaseModel):
+    timestamp: str
+    action: str
+    userId: Optional[str] = ""
+    userName: Optional[str] = ""
+    details: Optional[str] = ""
+
+
+# Complete Clinical Order
+class ClinicalOrder(BaseModel):
+    id: Optional[str] = None
+    patientInfo: PatientOrderInfo
+    providerInfo: ProviderOrderInfo
+    orderDetails: OrderDetailsInfo
+    clinicalJustification: ClinicalJustificationInfo
+    priorityTiming: PriorityTimingInfo
+    collectionInstructions: CollectionInstructionsInfo
+    safetyChecks: SafetyChecksInfo
+    attachments: AttachmentsInfo
+    authentication: AuthenticationInfo
+    metadata: OrderMetadata
+    auditTrail: List[AuditEntry] = []
+
+
+# Order creation request (subset of fields needed for validation)
+class OrderCreateRequest(BaseModel):
+    patientInfo: PatientOrderInfo
+    providerInfo: ProviderOrderInfo
+    orderDetails: OrderDetailsInfo
+    clinicalJustification: ClinicalJustificationInfo
+    priorityTiming: PriorityTimingInfo
+    collectionInstructions: CollectionInstructionsInfo
+    safetyChecks: SafetyChecksInfo
+    attachments: AttachmentsInfo
+    authentication: AuthenticationInfo
+    metadata: Optional[OrderMetadata] = None
+
+
+# Order response with ID
+class OrderResponse(BaseModel):
+    id: str
+    status: str
+    message: str
+    order: ClinicalOrder
+
+
+# Order list response
+class OrderListResponse(BaseModel):
+    orders: List[ClinicalOrder]
+    total: int
