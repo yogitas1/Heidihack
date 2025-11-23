@@ -35,6 +35,8 @@ import Calendar from './components/Calendar';
 import AppointmentModal from './components/AppointmentModal';
 import FollowUpRecommendations from './components/FollowUpRecommendations';
 import RecommendedActions from './components/RecommendedActions';
+import PatientDashboard from './components/PatientDashboard';
+import PatientProfile from './components/PatientProfile';
 import apiClient from './api/client';
 import { mockPatients } from './data/mockPatients';
 
@@ -49,8 +51,11 @@ function App() {
   // Completed patients tracking
   const [completedPatients, setCompletedPatients] = useState([]);
 
-  // Current view: 'list' | 'form' | 'calendar'
+  // Current view: 'list' | 'form' | 'calendar' | 'dashboard' | 'patient-profile'
   const [currentView, setCurrentView] = useState('list');
+
+  // Selected patient for dashboard profile view
+  const [dashboardPatientId, setDashboardPatientId] = useState(null);
 
   // Appointments for calendar
   const [appointments, setAppointments] = useState([]);
@@ -90,6 +95,12 @@ function App() {
 
   // Reset trigger for form component
   const [resetTrigger, setResetTrigger] = useState(0);
+
+  // Track if encounter has been saved
+  const [encounterSaved, setEncounterSaved] = useState(false);
+
+  // Form data for saving encounters
+  const [lastFormData, setLastFormData] = useState(null);
 
   // Reference to insights section for scrolling
   const insightsRef = useRef(null);
@@ -159,6 +170,8 @@ function App() {
     setError(null);
     setResetTrigger(prev => prev + 1);
     setCurrentView('list');
+    setEncounterSaved(false);
+    setLastFormData(null);
   }, [analysisResults, selectedPatient]);
 
   /**
@@ -253,6 +266,71 @@ function App() {
   }, [fetchAppointments]);
 
   /**
+   * Handle viewing patient profile from dashboard
+   */
+  const handleViewPatientProfile = useCallback((patientId) => {
+    setDashboardPatientId(patientId);
+    setCurrentView('patient-profile');
+  }, []);
+
+  /**
+   * Handle going back to dashboard from patient profile
+   */
+  const handleBackToDashboard = useCallback(() => {
+    setDashboardPatientId(null);
+    setCurrentView('dashboard');
+  }, []);
+
+  /**
+   * Handle saving encounter to patient record
+   */
+  const handleSaveEncounter = useCallback(async () => {
+    if (!patientData || !analysisResults || !lastFormData) {
+      setError('Missing data to save encounter');
+      return;
+    }
+
+    try {
+      // Find the patient ID in the dashboard that matches the MRN
+      const encounterData = {
+        chiefComplaint: lastFormData.chief_complaint || '',
+        hpi: lastFormData.hpi || '',
+        physicalExam: lastFormData.physical_exam || '',
+        vitals: patientData.vitals || {},
+        doctorNotes: lastFormData.doctor_notes || '',
+        clinicalNote: analysisResults.soap_note ? {
+          subjective: analysisResults.soap_note.subjective || '',
+          objective: analysisResults.soap_note.objective || '',
+          assessment: analysisResults.soap_note.assessment || '',
+          plan: analysisResults.soap_note.plan || ''
+        } : null,
+        icdCodes: analysisResults.differential_diagnosis?.map(d => ({
+          code: d.icd_code || '',
+          description: d.diagnosis || ''
+        })) || [],
+        differentialDiagnoses: analysisResults.differential_diagnosis || [],
+        recommendedActions: analysisResults.recommended_actions || [],
+        provider: 'Dr. Smith'
+      };
+
+      // Get patient ID from MRN mapping (1-5 based on MRN-2024-00X format)
+      const mrnMatch = patientData.mrn?.match(/MRN-2024-00(\d)/);
+      const patientId = mrnMatch ? mrnMatch[1] : '1';
+
+      const response = await apiClient.post(`/api/patients/${patientId}/encounters`, encounterData);
+
+      setEncounterSaved(true);
+      announceToScreenReader('Encounter saved successfully');
+
+      return response.data;
+    } catch (err) {
+      console.error('Failed to save encounter:', err);
+      setError('Failed to save encounter. Please try again.');
+      throw err;
+    }
+  }, [patientData, analysisResults, lastFormData]);
+
+  /**
    * Handle order submission from RecommendedActions
    */
   const handleOrderSubmit = useCallback(async (orderData) => {
@@ -320,6 +398,8 @@ function App() {
     setIsLoading(prev => ({ ...prev, analysis: true }));
     setError(null);
     setAnalysisProgress('note');
+    setLastFormData(formData);
+    setEncounterSaved(false);
 
     try {
       // Simulate progress through different stages
@@ -433,6 +513,8 @@ function App() {
     setAnalysisProgress(null);
     setShowResetConfirm(false);
     setIsLoading({ patient: false, analysis: false });
+    setEncounterSaved(false);
+    setLastFormData(null);
 
     // Trigger form reset by incrementing the resetTrigger
     setResetTrigger(prev => prev + 1);
@@ -571,6 +653,20 @@ function App() {
                 </button>
               )}
               <button
+                onClick={() => setCurrentView(currentView === 'dashboard' || currentView === 'patient-profile' ? 'list' : 'dashboard')}
+                className={`inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 ${
+                  currentView === 'dashboard' || currentView === 'patient-profile'
+                    ? 'text-white bg-green-600 border border-green-600 hover:bg-green-700'
+                    : 'text-green-600 bg-green-50 border border-green-200 hover:bg-green-100'
+                }`}
+                aria-label="View patient dashboard"
+              >
+                <svg className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+                Dashboard
+              </button>
+              <button
                 onClick={() => setCurrentView(currentView === 'calendar' ? 'list' : 'calendar')}
                 className={`inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${
                   currentView === 'calendar'
@@ -666,6 +762,19 @@ function App() {
             onAppointmentClick={handleAppointmentClick}
           />
         </main>
+      ) : currentView === 'dashboard' ? (
+        /* Patient Dashboard View */
+        <main id="main-content" className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
+          <PatientDashboard onSelectPatient={handleViewPatientProfile} />
+        </main>
+      ) : currentView === 'patient-profile' ? (
+        /* Patient Profile View */
+        <main id="main-content" className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
+          <PatientProfile
+            patientId={dashboardPatientId}
+            onBack={handleBackToDashboard}
+          />
+        </main>
       ) : !selectedPatient ? (
         /* Patient List View */
         <main id="main-content" className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
@@ -746,6 +855,35 @@ function App() {
                 {/* Show insights or placeholder */}
                 {analysisResults ? (
                   <div className="slide-in-right space-y-6">
+                    {/* Save Encounter Button */}
+                    <div className="flex justify-end">
+                      <button
+                        onClick={handleSaveEncounter}
+                        disabled={encounterSaved}
+                        className={`inline-flex items-center px-4 py-2 text-sm font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+                          encounterSaved
+                            ? 'bg-green-100 text-green-800 cursor-default'
+                            : 'bg-medical-600 text-white hover:bg-medical-700 focus:ring-medical-500'
+                        }`}
+                      >
+                        {encounterSaved ? (
+                          <>
+                            <svg className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                            Encounter Saved
+                          </>
+                        ) : (
+                          <>
+                            <svg className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                            </svg>
+                            Save Encounter
+                          </>
+                        )}
+                      </button>
+                    </div>
+
                     <AIInsights analysisData={analysisResults} />
 
                     {/* Recommended Actions with Order Placement */}

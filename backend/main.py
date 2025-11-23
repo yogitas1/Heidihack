@@ -26,6 +26,7 @@ from validate_mock_data import validate_mock_data
 from rag_engine import ClinicalRAG
 from routes.appointments import router as appointments_router, generate_follow_up_recommendations
 from routes.orders import router as orders_router
+from routes.patients import router as patients_router
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -47,6 +48,7 @@ app.add_middleware(
 # Include routers
 app.include_router(appointments_router)
 app.include_router(orders_router)
+app.include_router(patients_router)
 
 # Environment variables
 HEIDI_API_KEY = os.getenv("HEIDI_API_KEY")

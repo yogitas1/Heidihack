@@ -303,3 +303,195 @@ class OrderResponse(BaseModel):
 class OrderListResponse(BaseModel):
     orders: List[ClinicalOrder]
     total: int
+
+
+# =============================================================================
+# Patient Dashboard Models
+# =============================================================================
+
+# Allergy with severity
+class AllergyInfo(BaseModel):
+    allergen: str
+    severity: str = "moderate"  # mild, moderate, severe
+    reaction: Optional[str] = ""
+    onsetDate: Optional[str] = ""
+
+
+# Chronic condition
+class ChronicCondition(BaseModel):
+    condition: str
+    icd10Code: Optional[str] = ""
+    diagnosedDate: Optional[str] = ""
+    status: str = "active"  # active, resolved, managed
+    notes: Optional[str] = ""
+
+
+# Surgical history entry
+class SurgicalHistory(BaseModel):
+    procedure: str
+    date: Optional[str] = ""
+    hospital: Optional[str] = ""
+    surgeon: Optional[str] = ""
+    notes: Optional[str] = ""
+
+
+# Family history entry
+class FamilyHistory(BaseModel):
+    relation: str  # mother, father, sibling, etc.
+    condition: str
+    ageOfOnset: Optional[str] = ""
+    notes: Optional[str] = ""
+
+
+# Social history
+class SocialHistory(BaseModel):
+    smokingStatus: str = "never"  # never, former, current
+    alcoholUse: str = "none"  # none, occasional, moderate, heavy
+    drugUse: Optional[str] = "none"
+    occupation: Optional[str] = ""
+    exercise: Optional[str] = ""
+    diet: Optional[str] = ""
+    livingSituation: Optional[str] = ""
+
+
+# Complete medical history
+class MedicalHistory(BaseModel):
+    chronicConditions: List[ChronicCondition] = []
+    pastDiagnoses: List[Dict[str, str]] = []  # [{code, description, date}]
+    surgicalHistory: List[SurgicalHistory] = []
+    familyHistory: List[FamilyHistory] = []
+    socialHistory: Optional[SocialHistory] = SocialHistory()
+    allergies: List[AllergyInfo] = []
+    medications: List[Dict[str, str]] = []  # [{name, dose, frequency, startDate}]
+    immunizations: List[Dict[str, str]] = []  # [{vaccine, date, provider}]
+
+
+# Encounter record (from ClinicalForm AI analysis)
+class Encounter(BaseModel):
+    id: Optional[str] = None
+    date: str
+    chiefComplaint: str
+    hpi: Optional[Dict[str, Any]] = {}
+    physicalExam: Optional[Dict[str, Any]] = {}
+    vitals: Optional[Dict[str, Any]] = {}
+    doctorNotes: Optional[str] = ""
+    clinicalNote: Optional[Dict[str, str]] = {}  # SOAP note from AI
+    icdCodes: List[Dict[str, str]] = []
+    differentialDiagnoses: List[Dict[str, Any]] = []
+    recommendedActions: Optional[Dict[str, List]] = {}
+    status: str = "completed"  # draft, completed, amended
+    provider: Optional[str] = ""
+    createdAt: Optional[str] = ""
+    updatedAt: Optional[str] = ""
+
+
+# Follow-up record
+class FollowUp(BaseModel):
+    id: Optional[str] = None
+    reason: str
+    scheduledDate: str
+    scheduledTime: Optional[str] = ""
+    duration: int = 30
+    status: str = "scheduled"  # scheduled, completed, cancelled, no-show
+    priority: str = "routine"  # urgent, routine, optional
+    notes: Optional[str] = ""
+    encounterId: Optional[str] = ""  # Link to originating encounter
+    completedDate: Optional[str] = ""
+    completedNotes: Optional[str] = ""
+
+
+# Patient alert
+class PatientAlert(BaseModel):
+    id: Optional[str] = None
+    type: str  # critical, warning, info
+    message: str
+    createdAt: str
+    resolvedAt: Optional[str] = ""
+    isActive: bool = True
+
+
+# Complete Patient Profile
+class Patient(BaseModel):
+    id: str
+    # Demographics
+    name: str
+    firstName: Optional[str] = ""
+    lastName: Optional[str] = ""
+    dateOfBirth: str
+    age: Optional[int] = 0
+    gender: str
+    mrn: str
+    phone: Optional[str] = ""
+    email: Optional[str] = ""
+    address: Optional[str] = ""
+    emergencyContact: Optional[Dict[str, str]] = {}
+    insuranceInfo: Optional[Dict[str, str]] = {}
+
+    # Medical data
+    medicalHistory: Optional[MedicalHistory] = MedicalHistory()
+    encounters: List[Encounter] = []
+    orders: List[str] = []  # Order IDs - full orders fetched separately
+    followUps: List[FollowUp] = []
+    alerts: List[PatientAlert] = []
+
+    # Metadata
+    primaryProvider: Optional[str] = ""
+    lastVisitDate: Optional[str] = ""
+    nextAppointmentDate: Optional[str] = ""
+    status: str = "active"  # active, inactive, deceased
+    createdAt: Optional[str] = ""
+    updatedAt: Optional[str] = ""
+
+
+# Patient list item (summary for dashboard)
+class PatientSummary(BaseModel):
+    id: str
+    name: str
+    mrn: str
+    age: int
+    gender: str
+    lastVisitDate: Optional[str] = ""
+    nextAppointmentDate: Optional[str] = ""
+    pendingOrdersCount: int = 0
+    activeAlertsCount: int = 0
+    alertLevel: str = "stable"  # stable, warning, critical
+    primaryProvider: Optional[str] = ""
+
+
+# Patient list response
+class PatientListResponse(BaseModel):
+    patients: List[PatientSummary]
+    total: int
+
+
+# Patient profile response
+class PatientProfileResponse(BaseModel):
+    patient: Patient
+    recentOrders: List[ClinicalOrder] = []
+
+
+# Encounter list response
+class EncounterListResponse(BaseModel):
+    encounters: List[Encounter]
+    total: int
+    page: int
+    pageSize: int
+
+
+# Update medical history request
+class UpdateMedicalHistoryRequest(BaseModel):
+    medicalHistory: MedicalHistory
+
+
+# Create encounter request
+class CreateEncounterRequest(BaseModel):
+    chiefComplaint: str
+    hpi: Optional[Dict[str, Any]] = {}
+    physicalExam: Optional[Dict[str, Any]] = {}
+    vitals: Optional[Dict[str, Any]] = {}
+    doctorNotes: Optional[str] = ""
+    clinicalNote: Optional[Dict[str, str]] = {}
+    icdCodes: List[Dict[str, str]] = []
+    differentialDiagnoses: List[Dict[str, Any]] = []
+    recommendedActions: Optional[Dict[str, List]] = {}
+    provider: Optional[str] = ""

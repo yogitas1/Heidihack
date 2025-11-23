@@ -155,7 +155,7 @@ export default function OrderForm({
         ...prev,
         patientInfo: {
           ...prev.patientInfo,
-          patientId: patientContext.id || '',
+          patientId: String(patientContext.id || ''),
           patientName: patientContext.name || '',
           mrn: patientContext.mrn || '',
           gender: patientContext.gender || '',
@@ -468,15 +468,31 @@ export default function OrderForm({
     setShowConfirmation(true);
   };
 
+  // Sanitize data to ensure no null values for strings
+  const sanitizeData = (obj) => {
+    if (obj === null || obj === undefined) return '';
+    if (typeof obj === 'boolean' || typeof obj === 'number') return obj;
+    if (typeof obj === 'string') return obj;
+    if (Array.isArray(obj)) return obj.map(sanitizeData);
+    if (typeof obj === 'object') {
+      const result = {};
+      for (const key in obj) {
+        result[key] = sanitizeData(obj[key]);
+      }
+      return result;
+    }
+    return obj;
+  };
+
   // Final submission after confirmation
   const handleConfirmedSubmit = async (signatureData) => {
     setIsSubmitting(true);
 
-    const orderData = {
+    const orderData = sanitizeData({
       ...formData,
       authentication: {
         ...formData.authentication,
-        digitalSignature: signatureData.signature,
+        digitalSignature: signatureData.signature || '',
         signatureTimestamp: new Date().toISOString(),
       },
       metadata: {
@@ -484,7 +500,10 @@ export default function OrderForm({
         status: 'pending',
         version: 1,
       },
-    };
+    });
+
+    // Debug: log the order data being sent
+    console.log('Order data being submitted:', JSON.stringify(orderData, null, 2));
 
     try {
       await onSubmit?.(orderData);

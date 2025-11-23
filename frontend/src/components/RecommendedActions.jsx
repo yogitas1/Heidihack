@@ -64,13 +64,8 @@ export default function RecommendedActions({
 
   const handleOrderSubmit = async (orderData) => {
     try {
-      // Try to submit to backend
-      try {
-        await onOrderSubmit?.(orderData);
-      } catch (error) {
-        // For now, continue with mock success even if backend fails
-        console.warn('Backend submission failed, using mock success:', error);
-      }
+      // Submit to backend
+      await onOrderSubmit?.(orderData);
 
       // Generate a unique key for this order
       const orderKey = `${orderData.orderDetails.orderName}-${orderData.orderDetails.orderType}`;
@@ -94,7 +89,21 @@ export default function RecommendedActions({
       setSelectedAction(null);
     } catch (error) {
       console.error('Order submission failed:', error);
-      throw error;
+      // Extract error message from response
+      let errorMsg = 'Order submission failed. Please check the form and try again.';
+      const detail = error.response?.data?.detail;
+      if (detail) {
+        if (Array.isArray(detail)) {
+          // Pydantic validation errors
+          errorMsg = detail.map(e => e.msg || JSON.stringify(e)).join('\n');
+        } else if (typeof detail === 'object' && detail.errors) {
+          // Custom validation errors
+          errorMsg = detail.errors.join('\n');
+        } else if (typeof detail === 'string') {
+          errorMsg = detail;
+        }
+      }
+      alert(errorMsg);
     }
   };
 
@@ -106,16 +115,22 @@ export default function RecommendedActions({
 
   // Map category to order type
   const getCategoryType = (category) => {
+    const cat = (category || '').toLowerCase();
     const mapping = {
-      'Lab': 'lab',
-      'Imaging': 'imaging',
-      'Diagnostic': 'imaging',
-      'Medication': 'medication',
-      'Referral': 'referral',
-      'Follow-up': 'referral',
-      'Education': 'other',
+      'lab': 'lab',
+      'laboratory': 'lab',
+      'imaging': 'imaging',
+      'diagnostic': 'imaging',
+      'radiology': 'imaging',
+      'medication': 'medication',
+      'prescription': 'medication',
+      'referral': 'referral',
+      'follow-up': 'referral',
+      'followup': 'referral',
+      'procedure': 'procedure',
+      'education': 'referral', // Map to valid type
     };
-    return mapping[category] || 'lab';
+    return mapping[cat] || 'lab';
   };
 
   // Get icon for category
