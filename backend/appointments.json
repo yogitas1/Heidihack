@@ -1,0 +1,32 @@
+[
+  {
+    "id": "cd3175df-4241-4af4-be76-e9fedf1b482b",
+    "patientId": "1",
+    "patientName": "Maria Alvarez",
+    "date": "2025-11-29T10:00:15.891069",
+    "duration": 30,
+    "type": "follow-up",
+    "status": "scheduled",
+    "notes": "Follow-up to assess treatment response",
+    "isFollowUp": true,
+    "relatedFormId": null,
+    "createdBy": "system",
+    "createdAt": "2025-11-23T05:04:28.314599",
+    "updatedAt": "2025-11-23T05:04:28.314599"
+  },
+  {
+    "id": "93f8d931-91bb-4fd2-8171-d0974583387b",
+    "patientId": "1",
+    "patientName": "Maria Alvarez",
+    "date": "2025-11-30T10:00:12.304599",
+    "duration": 30,
+    "type": "follow-up",
+    "status": "scheduled",
+    "notes": "Follow-up to assess treatment response",
+    "isFollowUp": true,
+    "relatedFormId": null,
+    "createdBy": "system",
+    "createdAt": "2025-11-23T18:22:36.356519",
+    "updatedAt": "2025-11-23T18:22:36.356519"
+  }
+]

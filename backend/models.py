@@ -123,12 +123,24 @@ class RecommendedActions(BaseModel):
     routine: Optional[List[RecommendedAction]] = []
 
 
+# Follow-up recommendation
+class FollowUpRecommendation(BaseModel):
+    id: str
+    reason: str
+    priority: str  # urgent, routine, optional
+    timeframe: str
+    suggestedDates: List[str]
+    duration: int
+    notes: str
+
+
 # Complete analysis response
 class AnalysisResponse(BaseModel):
     clinical_note: ClinicalNote
     icd_codes: List[ICD10Code]
     differential_diagnoses: List[DifferentialDiagnosis]
     recommended_actions: RecommendedActions
+    follow_up_recommendations: Optional[List[FollowUpRecommendation]] = []
 
 
 # Legacy response format for backwards compatibility

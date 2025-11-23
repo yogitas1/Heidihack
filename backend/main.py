@@ -22,6 +22,7 @@ from models import (
 from mock_data import MOCK_PATIENT
 from validate_mock_data import validate_mock_data
 from rag_engine import ClinicalRAG
+from routes.appointments import router as appointments_router, generate_follow_up_recommendations
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -39,6 +40,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include routers
+app.include_router(appointments_router)
 
 # Environment variables
 HEIDI_API_KEY = os.getenv("HEIDI_API_KEY")
@@ -914,12 +918,20 @@ async def analyze_encounter(request: AnalysisRequest):
                 routine=routine_tasks
             )
 
+            # Generate follow-up recommendations
+            analysis_for_followup = {
+                "urgencyLevel": "routine",
+                "recommendedTests": [task.get("name", "") for task in actions.get("urgent", []) if task.get("category") == "Lab"]
+            }
+            follow_ups = generate_follow_up_recommendations(form_dict, analysis_for_followup)
+
             logger.info("RAG analysis completed successfully")
             return AnalysisResponse(
                 clinical_note=clinical_note,
                 icd_codes=icd_codes,
                 differential_diagnoses=differential_diagnoses,
-                recommended_actions=recommended_actions
+                recommended_actions=recommended_actions,
+                follow_up_recommendations=follow_ups
             )
 
         except Exception as e:
@@ -1037,11 +1049,19 @@ PLAN:
             differential_diagnoses = generate_mock_differentials(form_data.chief_complaint)
             recommended_actions = generate_mock_actions(form_data.chief_complaint)
 
+        # Generate follow-up recommendations
+        analysis_for_followup = {
+            "urgencyLevel": "routine",
+            "recommendedTests": [task.name for task in recommended_actions.urgent if task.category == "Lab"]
+        }
+        follow_ups = generate_follow_up_recommendations(form_dict, analysis_for_followup)
+
         return AnalysisResponse(
             clinical_note=clinical_note,
             icd_codes=icd_codes,
             differential_diagnoses=differential_diagnoses,
-            recommended_actions=recommended_actions
+            recommended_actions=recommended_actions,
+            follow_up_recommendations=follow_ups
         )
 
     except HeidiAPIError as e:
